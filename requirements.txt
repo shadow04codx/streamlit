@@ -1,0 +1,6 @@
+streamlit
+pymupdf
+matplotlib
+Pillow
+python-dotenv
+google-generativeai
