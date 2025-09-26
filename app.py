@@ -1,21 +1,20 @@
+# app.py
 import streamlit as st
-import os
 import base64
 import io
 import re
 import fitz  # PyMuPDF
 import matplotlib.pyplot as plt
 from PIL import Image
-from dotenv import load_dotenv
 import requests
 
 # ---------------------------
 # 🌐 App Setup
 # ---------------------------
 st.set_page_config(page_title="AI Job Assistant", layout="wide")
-load_dotenv()
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+# OpenRouter settings (load from Streamlit secrets)
+OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # ---------------------------
@@ -25,10 +24,7 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 def extract_text_from_pdf(uploaded_file):
     """Extract plain text from uploaded PDF resume."""
     with fitz.open(stream=uploaded_file.read(), filetype="pdf") as pdf_doc:
-        text = ""
-        for page in pdf_doc:
-            text += page.get_text("text") + "\n"
-    return text.strip()
+        return "\n".join(page.get_text("text") for page in pdf_doc).strip()
 
 
 def input_pdf_setup(uploaded_file):
@@ -43,24 +39,23 @@ def input_pdf_setup(uploaded_file):
 
 
 def get_openrouter_response(prompt, job_desc="", resume_text=""):
-    """Send prompt to OpenRouter API and return response."""
+    """Send prompt to OpenRouter API and return response text."""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": "anthropic/claude-3.5-sonnet",  # You can swap to gpt-4, llama, mistral etc.
+        "model": "anthropic/claude-3.5-sonnet",  # Change to gpt-4, llama, mistral, etc.
         "messages": [
             {"role": "system", "content": "You are an expert ATS resume analyzer and career coach."},
             {"role": "user", "content": f"Job Description:\n{job_desc}\n\nResume:\n{resume_text}\n\nTask:\n{prompt}"}
-        ]
+        ],
     }
 
     try:
-        response = requests.post(OPENROUTER_URL, headers=headers, json=payload)
+        response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
         response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+        return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
         return f"⚠️ Error: {str(e)}"
 
@@ -71,9 +66,8 @@ def extract_match_percentage(response_text):
     if match:
         return int(match.group(1))
 
-    numbers = re.findall(r'\b\d+\b', response_text)
+    numbers = [int(num) for num in re.findall(r'\b\d+\b', response_text)]
     for num in numbers:
-        num = int(num)
         if 50 <= num <= 100:
             return num
     return 50
@@ -94,15 +88,22 @@ def match_percentage_to_words(match_percentage):
 
 def display_pie_chart(match_percentage):
     """Display pie chart for resume-job match percentage."""
-    labels = ['Match', 'Not Match']
+    labels = ["Match", "Not Match"]
     sizes = [match_percentage, 100 - match_percentage]
-    colors = ['#4CAF50', '#FF5733']
+    colors = ["#4CAF50", "#FF5733"]
     explode = (0.1, 0)
 
     fig, ax = plt.subplots()
-    ax.pie(sizes, labels=labels, autopct='%1.1f%%',
-           colors=colors, startangle=140, explode=explode, textprops={'color': "w"})
-    ax.axis('equal')
+    ax.pie(
+        sizes,
+        labels=labels,
+        autopct="%1.1f%%",
+        colors=colors,
+        startangle=140,
+        explode=explode,
+        textprops={"color": "w"},
+    )
+    ax.axis("equal")
     st.pyplot(fig)
 
 # ---------------------------
@@ -120,33 +121,30 @@ if page == "Resume Analyzer":
     job_desc = st.text_area("📌 Paste Job Description: ")
     uploaded_file = st.file_uploader("📂 Upload your resume (PDF)...", type=["pdf"])
 
+    resume_text = ""
+    pdf_image = None
     if uploaded_file:
         st.success("✅ Resume Uploaded Successfully!")
         resume_text = extract_text_from_pdf(uploaded_file)
         pdf_image, _ = input_pdf_setup(uploaded_file)
-    else:
-        resume_text = ""
 
     st.divider()
 
     col1, col2, col3 = st.columns(3)
-    with col1:
-        analyze_btn = st.button("🔍 Analyze Resume")
-    with col2:
-        improve_btn = st.button("📈 Improve Skills")
-    with col3:
-        match_btn = st.button("⚡ Match with Job")
+    analyze_btn = col1.button("🔍 Analyze Resume")
+    improve_btn = col2.button("📈 Improve Skills")
+    match_btn = col3.button("⚡ Match with Job")
 
     prompts = {
         "analyze": "Analyze the resume and job description. Provide detailed, actionable feedback.",
         "improve": "Suggest concrete skill improvements and certifications.",
         "match": """
-        Evaluate the resume against the job description. 
+        Evaluate the resume against the job description.
         Output format:
         - Match Percentage: XX%
         - Missing Keywords: [List missing skills/tools]
         - Final Thoughts: Summary of strengths, weaknesses, recommendation.
-        """
+        """,
     }
 
     if uploaded_file:
@@ -167,10 +165,15 @@ if page == "Resume Analyzer":
                 response = get_openrouter_response(prompts["match"], job_desc, resume_text)
             match_percentage = extract_match_percentage(response)
 
-            st.image(pdf_image, caption="Resume First Page", width=400)
+            if pdf_image:
+                st.image(pdf_image, caption="Resume First Page", width=400)
+
             st.subheader(f"📌 Match Percentage: *{match_percentage}%*")
             display_pie_chart(match_percentage)
-            st.markdown(f"<h3 style='text-align: center;'>{match_percentage_to_words(match_percentage)}</h3>", unsafe_allow_html=True)
+            st.markdown(
+                f"<h3 style='text-align: center;'>{match_percentage_to_words(match_percentage)}</h3>",
+                unsafe_allow_html=True,
+            )
 
             st.subheader("📑 Detailed Analysis")
             st.write(response)
