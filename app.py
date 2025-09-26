@@ -13,8 +13,15 @@ import requests
 # ---------------------------
 st.set_page_config(page_title="AI Job Assistant", layout="wide")
 
-# OpenRouter settings (load from Streamlit secrets)
-OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
+# ---------------------------
+# 🔑 OpenRouter API Key Handling
+# ---------------------------
+if "OPENROUTER_API_KEY" in st.secrets:
+    OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
+else:
+    st.error("❌ OPENROUTER_API_KEY not found! Add it in Streamlit Cloud Secrets.")
+    st.stop()
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # ---------------------------
@@ -42,10 +49,13 @@ def get_openrouter_response(prompt, job_desc="", resume_text=""):
     """Send prompt to OpenRouter API and return response text."""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": st.secrets.get("APP_URL", "https://your-app-name.streamlit.app"),
+        "X-Title": "AI Job Assistant",
         "Content-Type": "application/json",
     }
+
     payload = {
-        "model": "anthropic/claude-3.5-sonnet",  # Change to gpt-4, llama, mistral, etc.
+        "model": "anthropic/claude-3.5-sonnet",
         "messages": [
             {"role": "system", "content": "You are an expert ATS resume analyzer and career coach."},
             {"role": "user", "content": f"Job Description:\n{job_desc}\n\nResume:\n{resume_text}\n\nTask:\n{prompt}"}
@@ -65,7 +75,6 @@ def extract_match_percentage(response_text):
     match = re.search(r"Match\s*Percentage[:\s]*([\d]+)%", response_text, re.IGNORECASE)
     if match:
         return int(match.group(1))
-
     numbers = [int(num) for num in re.findall(r'\b\d+\b', response_text)]
     for num in numbers:
         if 50 <= num <= 100:
