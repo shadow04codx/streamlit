@@ -1,5 +1,5 @@
-streamlit==1.26.1
-pymupdf==1.26.5
+streamlit==1.50.0
+pymupdf==1.26.4   # Last stable version available for Python 3.12
 matplotlib==3.8.1
 Pillow==10.1.0
 python-dotenv==1.0.0
