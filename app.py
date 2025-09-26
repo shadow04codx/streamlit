@@ -7,14 +7,16 @@ import fitz  # PyMuPDF
 import matplotlib.pyplot as plt
 from PIL import Image
 from dotenv import load_dotenv
-import google.generativeai as genai
+import requests
 
 # ---------------------------
 # 🌐 App Setup
 # ---------------------------
 st.set_page_config(page_title="AI Job Assistant", layout="wide")
 load_dotenv()
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # ---------------------------
 # 🔧 Utility Functions
@@ -40,16 +42,27 @@ def input_pdf_setup(uploaded_file):
         return Image.open(io.BytesIO(img_bytes)), encoded_img
 
 
-def get_gemini_response(prompt, job_desc="", pdf_content=None):
-    """Generate response from Gemini AI model."""
+def get_openrouter_response(prompt, job_desc="", resume_text=""):
+    """Send prompt to OpenRouter API and return response."""
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "anthropic/claude-3.5-sonnet",  # You can swap to gpt-4, llama, mistral etc.
+        "messages": [
+            {"role": "system", "content": "You are an expert ATS resume analyzer and career coach."},
+            {"role": "user", "content": f"Job Description:\n{job_desc}\n\nResume:\n{resume_text}\n\nTask:\n{prompt}"}
+        ]
+    }
+
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        inputs = [job_desc, pdf_content] if pdf_content else [job_desc]
-        inputs.append(prompt)
-        response = model.generate_content(inputs)
-        return response.text
+        response = requests.post(OPENROUTER_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
     except Exception as e:
-        return f"⚠️ Error fetching response: {str(e)}"
+        return f"⚠️ Error: {str(e)}"
 
 
 def extract_match_percentage(response_text):
@@ -63,7 +76,7 @@ def extract_match_percentage(response_text):
         num = int(num)
         if 50 <= num <= 100:
             return num
-    return 50  # Default fallback
+    return 50
 
 
 def match_percentage_to_words(match_percentage):
@@ -87,10 +100,8 @@ def display_pie_chart(match_percentage):
     explode = (0.1, 0)
 
     fig, ax = plt.subplots()
-    wedges, texts, autotexts = ax.pie(
-        sizes, labels=labels, autopct='%1.1f%%',
-        colors=colors, startangle=140, explode=explode, textprops={'color': "w"}
-    )
+    ax.pie(sizes, labels=labels, autopct='%1.1f%%',
+           colors=colors, startangle=140, explode=explode, textprops={'color': "w"})
     ax.axis('equal')
     st.pyplot(fig)
 
@@ -111,10 +122,13 @@ if page == "Resume Analyzer":
 
     if uploaded_file:
         st.success("✅ Resume Uploaded Successfully!")
+        resume_text = extract_text_from_pdf(uploaded_file)
+        pdf_image, _ = input_pdf_setup(uploaded_file)
+    else:
+        resume_text = ""
 
     st.divider()
 
-    # Action Buttons
     col1, col2, col3 = st.columns(3)
     with col1:
         analyze_btn = st.button("🔍 Analyze Resume")
@@ -123,40 +137,36 @@ if page == "Resume Analyzer":
     with col3:
         match_btn = st.button("⚡ Match with Job")
 
-    # Prompts
     prompts = {
-        "analyze": "Analyze the resume and job description to provide detailed, actionable feedback.",
-        "improve": "Suggest concrete skill improvements and certifications to strengthen this resume.",
+        "analyze": "Analyze the resume and job description. Provide detailed, actionable feedback.",
+        "improve": "Suggest concrete skill improvements and certifications.",
         "match": """
-        You are an advanced AI-based ATS scanner. Evaluate the resume against the job description 
-        and provide a *clear match percentage* between *0% to 100%*. 
-        Format:
+        Evaluate the resume against the job description. 
+        Output format:
         - Match Percentage: XX%
         - Missing Keywords: [List missing skills/tools]
-        - Final Thoughts: Summary of strengths, weaknesses, and recommendation.
+        - Final Thoughts: Summary of strengths, weaknesses, recommendation.
         """
     }
 
     if uploaded_file:
-        pdf_image, pdf_base64 = input_pdf_setup(uploaded_file)
-
         if analyze_btn:
             with st.spinner("Analyzing resume..."):
-                response = get_gemini_response(prompts["analyze"], job_desc, {"mime_type": "image/png", "data": pdf_base64})
+                response = get_openrouter_response(prompts["analyze"], job_desc, resume_text)
             st.subheader("📊 Analysis")
             st.write(response)
 
         elif improve_btn:
             with st.spinner("Generating improvement suggestions..."):
-                response = get_gemini_response(prompts["improve"], job_desc, {"mime_type": "image/png", "data": pdf_base64})
+                response = get_openrouter_response(prompts["improve"], job_desc, resume_text)
             st.subheader("📈 Improvement Suggestions")
             st.write(response)
 
         elif match_btn:
             with st.spinner("Matching resume with job description..."):
-                response = get_gemini_response(prompts["match"], job_desc, {"mime_type": "image/png", "data": pdf_base64})
-
+                response = get_openrouter_response(prompts["match"], job_desc, resume_text)
             match_percentage = extract_match_percentage(response)
+
             st.image(pdf_image, caption="Resume First Page", width=400)
             st.subheader(f"📌 Match Percentage: *{match_percentage}%*")
             display_pie_chart(match_percentage)
@@ -174,7 +184,7 @@ if page == "Resume Analyzer":
 elif page == "Cold Email Generator":
     st.markdown("<h1 style='text-align: center;'>📧 AI Cold Email Generator</h1>", unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader("📂 Upload your resume (PDF) for auto-extraction...", type=["pdf"])
+    uploaded_file = st.file_uploader("📂 Upload your resume (PDF)...", type=["pdf"])
     extracted_text = ""
 
     if uploaded_file:
@@ -186,29 +196,25 @@ elif page == "Cold Email Generator":
     linkedin = st.text_input("🔗 Enter Your LinkedIn Profile (Optional):")
     tone = st.radio("🎯 Select Email Tone:", ["Formal", "Casual"], index=0)
 
-    def get_cold_email(job_description, resume_text, linkedin, tone):
-        prompt = f"""
-        Write a professional cold email for a job opportunity based on the resume and job description.
-
-        LinkedIn: {linkedin if linkedin else 'Not Provided'}
-        Tone: {tone}
-
-        Resume Details:
-        {resume_text}
-
-        Job Description:
-        {job_description}
-        """
-        return get_gemini_response(prompt)
-
     if st.button("✉️ Generate Cold Email"):
         if uploaded_file and job_description.strip():
             with st.spinner("Generating cold email..."):
-                cold_email = get_cold_email(job_description, extracted_text, linkedin, tone)
+                prompt = f"""
+                Write a professional cold email for a job opportunity.
+
+                LinkedIn: {linkedin if linkedin else "Not Provided"}
+                Tone: {tone}
+
+                Resume:
+                {extracted_text}
+
+                Job Description:
+                {job_description}
+                """
+                cold_email = get_openrouter_response(prompt, job_description, extracted_text)
+
             st.subheader("📨 Generated Cold Email:")
             st.write(cold_email)
-
-            # Download Option
             st.download_button("⬇️ Download Email", cold_email, file_name="cold_email.txt")
         else:
             st.warning("⚠️ Please upload your resume and enter a job description!")
